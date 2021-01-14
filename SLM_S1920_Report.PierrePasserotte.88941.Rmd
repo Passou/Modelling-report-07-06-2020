@@ -1,0 +1,223 @@
+---
+title: "MODELLING REPORT"
+author: "Pierre Passerotte 88941"
+date: "07/06/2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Librairies 
+```{r}
+library(readr)
+library(dplyr)
+library(rpart.plot)
+library(rpart)
+library(caret)
+library(randomForest)
+library(pROC)
+library(MASS)
+library(ROCR)
+library(pROC)
+library(Ecdat)
+library(party)
+library(nnet)
+library(AMORE)
+options(tinytex.verbose = TRUE)
+```
+
+# 1) Introduction
+
+This multivariate dataset is composed of 6 attributes and one target. The first  two variables represents the White King’s position on board : his column and row. The next 2 attributes represent the White Rook’s board position and the last ones represent the White Queen’s position. Our final variable which seems to be the target represent the optimal depth-of-win for White player from 0 to 16 moves. Otherwise, it could be drawn. 
+We observed 28 055 observations on this dataset, and there is no missing values. 
+
+Attribute Information:
+
+   1. White King file (column) ( a,b,c,d)
+   
+   2. White King rank (row) (1,2,3,4)
+   
+   3. White Rook file (a,b,c,d,e,f,g,h)
+   
+   4. White Rook rank (1,2,3,4,5,6,7,8)
+   
+   5. Black King file (a,b,c,d,e,f,g)
+   
+   6. Black King rank (1,2,3,4,5,6,7,8)
+   
+   7. optimal depth-of-win for White in 0 to 16 moves, otherwise drawn
+	{draw, zero, one, two, ..., sixteen} == TARGET
+
+# 2) Cleaning and preprocessing data
+
+Importing Dataset and getting an overview
+```{r}
+library(readr)
+krkopt <- read_csv("https://archive.ics.uci.edu/ml/machine-learning-databases/chess/king-rook-vs-king/krkopt.data", 
+                   col_names = FALSE)
+View(krkopt)
+str(krkopt)
+```
+
+We renamed the variables here and we also mutate its format type. We decided to put everything as factor to use a maximum of models.  
+```{r}
+names(krkopt)<-c("wkf","wkr","wrf","wrr","bkf","bkr","class")
+krkopt=krkopt%>%mutate_if(is.character, as.factor)
+krkopt=krkopt%>%mutate_if(is.numeric, as.factor)
+krkopt<-na.omit(krkopt)
+```
+
+Fortunately, there isn't missing values in this dataset. 
+
+# 3) Overview 
+
+```{r}
+gg1<-ggplot(data = krkopt) +
+  geom_bar(mapping = aes(x = class)) + ggtitle("Distribution target's level")
+gg1
+```
+
+
+```{r}
+ggplot(krkopt, aes(class , fill=wkf)) + geom_bar()+ scale_fill_brewer(palette())+theme(legend.position = "bottom")
+```
+
+```{r}
+ggplot(krkopt, aes(class , fill=wkr)) + geom_bar()+ scale_fill_brewer(palette())+theme(legend.position = "bottom")
+```
+
+
+Above, you could find repartition of file and rank across target's level concerning White King.
+
+```{r}
+ggplot(krkopt, aes(class , fill=wrf)) + geom_bar()+ scale_fill_brewer(palette())+theme(legend.position = "bottom")
+ggplot(krkopt, aes(class , fill=wrr)) + geom_bar()+ scale_fill_brewer(palette())+theme(legend.position = "bottom")
+```
+
+
+Above, you could find repartition of file and rank across target's level concerning white rook.
+
+```{r}
+ggplot(krkopt, aes(class , fill=bkf)) + geom_bar()+ scale_fill_brewer(palette())+theme(legend.position = "bottom")
+ggplot(krkopt, aes(class , fill=bkr)) + geom_bar()+ scale_fill_brewer(palette())+theme(legend.position = "bottom")
+```
+
+
+Above, you could find repartition of file and rank across target's level concerning black king. 
+
+
+The repartition is quiet homogeneous across all levels.
+
+
+Now, we can split our dataset into train and validation
+```{r}
+rand = sample(1:nrow(krkopt),0.7*nrow(krkopt)) 
+Train = krkopt[rand,]
+Val = krkopt[-rand,]
+```
+# 4) Model: creation and assesment 
+
+
+## A) Classification Tree
+
+
+```{r}
+
+RPART <- rpart(class ~. , data=Train, cp=0, method = "class")
+cptable <- RPART$cptable
+CP.OPT<-RPART$cptable[which.min(RPART$cptable[,"xerror"]),"CP"]
+OPRPART<-prune(RPART, cp = CP.OPT)
+RPART_pred<-predict(OPRPART, newdata=Val,type="class")
+``` 
+
+```{r}
+plotcp(RPART)
+``` 
+
+Above, you could find the Complexity Parameter Table. When tree's size increases, relative error decreases. But complexity is also decreasing too. We have to find optimal point. We calculated this optimal complexity below which is approximatively 0,00009. It refers to a size of tree between [764] and [963]. We are not surprised here because our target has seventeen levels. 
+
+```{r}
+print(RPART$cptable[which.min(RPART$cptable[,4]),1])
+```
+
+Then, you could find the confusionMatrix of the tree, which has 65,97% as accuracy. It is quiet good. 
+
+```{r}
+confusionMatrix(RPART_pred, Val$class)
+```
+We did not plot the tree or print the decision rules. The results were toog long because of the multiple target's level. But It said that Wkf was the primary variable who entered in decision. 
+
+
+## B) Random Forest
+
+```{r}
+Model <- randomForest(class~., data=Train, ntrees=200)
+pred<-predict(Model, newdata=Val)
+confusionMatrix(pred,Val$class)
+varImpPlot(Model)
+```
+
+Then, we applied for a random forest using 200 trees. By looking at the confusion matrix, the accuracy rate is higher than previous model [73,88%]. This confirms the findings in our initial classification tree: most importants variables concern White rook and Blakc King's positions. We can observ an significant difference for White King. Let's remind that we are studying White player victories. It makes totally sense since we know that we don't need to deal with White King to win a party. 
+
+
+ 
+## C) Multinomial Logistic regression
+
+Now, let's run a logistic regression. 
+
+```{r}
+multi<- multinom(class ~., family=binomial(logit), data=Train, control = list(maxit = 50))
+multi.prediction = predict(multi, Val, type= 'class')
+pred.obs=data.frame(multi.prediction=multi.prediction, Val$class)
+ctable1<- table(Val$class, multi.prediction)
+```
+
+You can find above the confusion matrix below. We have [40.67]% as accuracy. It would mean that our model is overfitted. 
+
+```{r}
+confusionMatrix(multi.prediction, Val$class)
+```
+To avoid overfitting, we could maybe try to order our targets level. 
+
+## D) Ordinal Logistic regression 
+
+Now, let's try to order our target variable from "draw" to "sixteen" 
+```{r}
+krkopt$class <- factor(krkopt$class, levels=c("draw","zero", "one", "two","three", "four" , "five","six", "seven", "eight", "nine", "ten", "eleven", "twelve" , "thirteen", "fourteen" , "fifteen" ,"sixteen"), ordered=TRUE)
+```
+Then, splitting dataset again 
+
+```{r}
+rand = sample(1:nrow(krkopt),0.7*nrow(krkopt)) 
+Training.Ordinal = krkopt[rand,]
+Validation.Ordinal = krkopt[-rand,]
+```
+Now, we are applying for an ordinal logistic regression. We could find below summary statistics concerning regression. I do not understand why this summary does not display p-values of my coefficents. I would have like to see which coefficients are significants or not. 
+```{r}
+polrMod <- polr(class ~. , data=Training.Ordinal)
+summary(polrMod)$coef
+```
+```{r}
+predictedClass <- predict(polrMod, Validation.Ordinal, type="class")
+ctabletest <- table(Validation.Ordinal$class, predictedClass)
+```
+Below, you can find the accuracy of our model. 
+```{r}
+round((sum(diag(ctabletest))/sum(ctabletest))*100,2)
+```
+The result is pretty similar to the previous multinomial logistic regression. It was in fact not relevant to order our target's level in an ordinal way. 
+
+
+# 5) Conclusion 
+
+To conclude, it was not an easy task for me to analyze this dataset. My best accurated model is Random Forest, with an accuracy greater than 70%. Then, we found 65% with classification tree. These two models are well fitted. Moreover, random forest is even better here because it reduced variance part of error rather than bias part. We can firstly assume that White King position is useless seeing results.  
+
+Concerning both logistic regression (multinomial and ordinal), we suppose that they are both overfitted. Accuracy for multinomial and oridnal models arerespectively 40% and 30%. When I tried to decrease his complexity by ommitting white king's position ("wkr","wkf"), I found worse results. I think that our target has too many level to get significant result. 
+
+I would have like to create more plot to asses my models but our multiclass target variable did not allow it. For exemple, I did not find a proper way to present a ROC curve with more than 2 outcome's level. Then, I also did not manage to plot my tree because it contained too many splits and branchs. So it would have been maybe preferable to analyse this dataset as an binary outcome (draw, victory). 
